@@ -118,8 +118,9 @@ fn parse_gt(gt: &[u8]) -> Option<Gt> {
         0 => None,
         1 => Some(Gt {
             als: [als[0], als[0]],
+            ploidy: 1,
         }),
-        _ => Some(Gt { als }),
+        _ => Some(Gt { als, ploidy: 2 }),
     }
 }
 
@@ -175,7 +176,7 @@ fn fill_allele_counts(ac: &mut Vec<i64>, n_allele: usize, info: &[u8], all_gts: 
         return;
     }
     for gt in all_gts.iter().flatten() {
-        for &a in &gt.als {
+        for &a in &gt.als[..gt.ploidy as usize] {
             if a >= 0 && (a as usize) < n_allele {
                 ac[a as usize] += 1;
             }
@@ -358,14 +359,38 @@ mod tests {
 
     #[test]
     fn parse_gt_diploid() {
-        assert_eq!(parse_gt(b"0/1"), Some(Gt { als: [0, 1] }));
-        assert_eq!(parse_gt(b"1|2"), Some(Gt { als: [1, 2] }));
+        assert_eq!(
+            parse_gt(b"0/1"),
+            Some(Gt {
+                als: [0, 1],
+                ploidy: 2
+            })
+        );
+        assert_eq!(
+            parse_gt(b"1|2"),
+            Some(Gt {
+                als: [1, 2],
+                ploidy: 2
+            })
+        );
     }
 
     #[test]
     fn parse_gt_haploid_is_hom() {
-        assert_eq!(parse_gt(b"1"), Some(Gt { als: [1, 1] }));
-        assert_eq!(parse_gt(b"0"), Some(Gt { als: [0, 0] }));
+        assert_eq!(
+            parse_gt(b"1"),
+            Some(Gt {
+                als: [1, 1],
+                ploidy: 1
+            })
+        );
+        assert_eq!(
+            parse_gt(b"0"),
+            Some(Gt {
+                als: [0, 0],
+                ploidy: 1
+            })
+        );
     }
 
     #[test]
@@ -386,9 +411,33 @@ mod tests {
 
     #[test]
     fn ac_from_genotypes_when_no_info() {
-        let gts = vec![Some(Gt { als: [0, 1] }), Some(Gt { als: [1, 1] })];
+        let gts = vec![
+            Some(Gt {
+                als: [0, 1],
+                ploidy: 2,
+            }),
+            Some(Gt {
+                als: [1, 1],
+                ploidy: 2,
+            }),
+        ];
         let mut ac = Vec::new();
         fill_allele_counts(&mut ac, 2, b".", &gts);
         assert_eq!(ac, vec![1, 3]);
+    }
+
+    #[test]
+    fn ac_charges_haploid_one_copy() {
+        // A hemizygous call `1` (ploidy 1) contributes a single alt copy to the
+        // population allele count, not two — matching bcf_calc_ac over the raw
+        // GT array where the second slot is bcf_int32_vector_end.
+        let gts = vec![
+            parse_gt(b"1"),   // haploid alt -> 1 copy of allele 1
+            parse_gt(b"0"),   // haploid ref -> 1 copy of allele 0
+            parse_gt(b"0/1"), // diploid het -> 1 ref + 1 alt
+        ];
+        let mut ac = Vec::new();
+        fill_allele_counts(&mut ac, 2, b".", &gts);
+        assert_eq!(ac, vec![2, 2]);
     }
 }

@@ -53,7 +53,9 @@ Each `FLT0` row carries the child, father and mother sample names followed by:
 
 Population allele counts use `INFO/AC`+`INFO/AN` when both are present, else are
 derived from the genotypes of every sample, matching htslib
-`bcf_calc_ac(BCF_UN_INFO|BCF_UN_FMT)`.
+`bcf_calc_ac(BCF_UN_INFO|BCF_UN_FMT)`. Ploidy is respected: a hemizygous call
+(e.g. a chrX/Y `GT` of `1`) contributes a single allele copy to this count, so
+it does not inflate the culprit allele's count in the recurrent-DNM test.
 
 ## Origin
 

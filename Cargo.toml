@@ -1,6 +1,6 @@
 [package]
 name = "rsomics-vcf-trio-stats"
-version = "0.1.0"
+version = "0.1.1"
 description = "Per-trio VCF transmission and de-novo statistics — valid/non-ref GTs, Mendelian errors, novel/untransmitted/transmitted singletons, Ts/Tv, hom and recurrent DNMs — value-exact with bcftools +trio-stats"
 edition = "2024"
 rust-version = "1.91"

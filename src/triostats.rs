@@ -54,12 +54,15 @@ pub fn acgt2int(b: u8) -> i32 {
     }
 }
 
-/// The diploid (or haploid) allele indices of one sample's GT after
-/// `parse_genotype`: `None` is a missing genotype; a haploid call is treated as
-/// homozygous diploid (the plugin sets `als[1]=als[0]`).
+/// The allele indices of one sample's GT after `parse_genotype`: `None` is a
+/// missing genotype; a haploid call is treated as homozygous diploid for the
+/// per-trio tally and Mendelian test (the plugin sets `als[1]=als[0]`), while
+/// `ploidy` records the true call length so the population allele count over
+/// `bcf_calc_ac` charges a hemizygous call one copy, not two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gt {
     pub als: [i32; 2],
+    pub ploidy: u8,
 }
 
 /// A record's parsed alleles, the per-allele population count `ac` (indexed by
@@ -247,7 +250,17 @@ mod tests {
     }
 
     fn gt(a: i32, b: i32) -> Option<Gt> {
-        Some(Gt { als: [a, b] })
+        Some(Gt {
+            als: [a, b],
+            ploidy: 2,
+        })
+    }
+
+    fn hap(a: i32) -> Option<Gt> {
+        Some(Gt {
+            als: [a, a],
+            ploidy: 1,
+        })
     }
 
     fn run(rec: &Record, c: Option<Gt>, f: Option<Gt>, m: Option<Gt>) -> TrioStats {
@@ -398,6 +411,19 @@ mod tests {
         let s = run(&r, gt(1, 2), gt(0, 0), gt(0, 0));
         assert_eq!(s.nmendel_err, 1);
         assert_eq!(s.ndnm_hom, 0);
+        assert_eq!(s.ndnm_recurrent, 0);
+    }
+
+    #[test]
+    fn haploid_child_hom_dnm_not_recurrent_at_ac_two() {
+        // chrX: child hemizygous alt (1), father hemizygous ref (0), mother het
+        // (0/1). The child's alt is non-inherited -> hom DNM. With the population
+        // count charging the haploid child one copy, ac[1]=2 (child+mother), and
+        // a hom DNM needs ac>2 to be recurrent -> not recurrent.
+        let r = rec(&[b"A", b"G"], &[2, 2]);
+        let s = run(&r, hap(1), hap(0), gt(0, 1));
+        assert_eq!(s.nmendel_err, 1);
+        assert_eq!(s.ndnm_hom, 1);
         assert_eq!(s.ndnm_recurrent, 0);
     }
 

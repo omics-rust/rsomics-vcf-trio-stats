@@ -19,6 +19,14 @@ fn golden_ped() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/trio.ped")
 }
 
+fn chrx_vcf() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/trio_chrx.vcf")
+}
+
+fn chrx_ped() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/trio_chrx.ped")
+}
+
 /// The `FLT0` rows produced by `bcftools +trio-stats 1.23.1` on the golden, in
 /// `child father mother npass nnon_ref nmendel nnovel nuntrans ntrans nts ntv
 /// tstv nhom_dnm nrecur_dnm` order.
@@ -27,8 +35,15 @@ const EXPECTED_FLT0: &[&str] = &[
     "FLT0\tCH2\tFA2\tMO2\t20\t8\t1\t0\t0\t6\t4\t4\t1.00\t1\t1",
 ];
 
-fn our_flt0() -> Vec<String> {
-    let table = trio_stats(&golden_vcf(), &TrioSpec::Ped(&golden_ped())).unwrap();
+/// `bcftools +trio-stats 1.23.1` on the chrX-haploid golden. Each trio has a
+/// hemizygous child; the recurrent-DNM column (last) is the one that inflates if
+/// a haploid call is charged two allele copies instead of one.
+const EXPECTED_CHRX_FLT0: &[&str] = &[
+    "FLT0\tCH1\tFA1\tMO1\t7\t7\t4\t0\t3\t0\t4\t3\t1.33\t4\t2",
+    "FLT0\tCH2\tFA2\tMO2\t7\t3\t2\t0\t1\t0\t1\t2\t0.50\t2\t1",
+];
+
+fn flt0_rows(table: &rsomics_vcf_trio_stats::TrioTable) -> Vec<String> {
     table
         .to_text()
         .lines()
@@ -37,12 +52,34 @@ fn our_flt0() -> Vec<String> {
         .collect()
 }
 
+fn our_flt0() -> Vec<String> {
+    let table = trio_stats(&golden_vcf(), &TrioSpec::Ped(&golden_ped())).unwrap();
+    flt0_rows(&table)
+}
+
 #[test]
 fn flt0_rows_match_frozen_bcftools() {
     let ours = our_flt0();
     assert_eq!(ours.len(), EXPECTED_FLT0.len(), "trio row count mismatch");
     for (got, want) in ours.iter().zip(EXPECTED_FLT0) {
         assert_eq!(got, want, "per-trio stats row differs from bcftools");
+    }
+}
+
+#[test]
+fn chrx_haploid_rows_match_frozen_bcftools() {
+    let table = trio_stats(&chrx_vcf(), &TrioSpec::Ped(&chrx_ped())).unwrap();
+    let ours = flt0_rows(&table);
+    assert_eq!(
+        ours.len(),
+        EXPECTED_CHRX_FLT0.len(),
+        "trio row count mismatch"
+    );
+    for (got, want) in ours.iter().zip(EXPECTED_CHRX_FLT0) {
+        assert_eq!(
+            got, want,
+            "chrX haploid trio stats differ from bcftools (recurrent-DNM regression?)"
+        );
     }
 }
 
@@ -86,6 +123,38 @@ fn live_differential_against_bcftools() {
         .map(str::to_string)
         .collect();
     assert_eq!(our_flt0(), oracle, "live bcftools differential mismatch");
+}
+
+/// Live differential on the chrX-haploid golden, gated on bcftools 1.23.x.
+#[test]
+fn chrx_live_differential_against_bcftools() {
+    let Some(version) = bcftools_version() else {
+        eprintln!("SKIP chrx_live_differential: bcftools not on PATH");
+        return;
+    };
+    if !version.starts_with("1.23") {
+        eprintln!("SKIP chrx_live_differential: bcftools {version} != 1.23.x");
+        return;
+    }
+    let out = Command::new("bcftools")
+        .arg("+trio-stats")
+        .arg("-p")
+        .arg(chrx_ped())
+        .arg(chrx_vcf())
+        .output()
+        .expect("run bcftools +trio-stats");
+    assert!(
+        out.status.success(),
+        "bcftools +trio-stats failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let oracle: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.starts_with("FLT0"))
+        .map(str::to_string)
+        .collect();
+    let table = trio_stats(&chrx_vcf(), &TrioSpec::Ped(&chrx_ped())).unwrap();
+    assert_eq!(flt0_rows(&table), oracle, "live chrX differential mismatch");
 }
 
 /// The single-trio `--pfm` path must agree with bcftools `-P`.
